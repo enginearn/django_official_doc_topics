@@ -636,6 +636,20 @@ in, gt, gte, lt, lte, range, year, month, day, week_day, isnull, search, regex, 
 
 Querying JSONField
 
+``` python 3
+class Dog(models.Model):
+    name = models.CharField(max_length=200)
+    data = models.JSONField(null=True)
+
+    class Meta:
+        db_table = "dog"
+        ordering = ['name']
+
+    def __str__(self) -> str:
+        return self.name
+
+```
+
 <details>
 <summary>Storing and querying for None</summary>
 
@@ -664,8 +678,175 @@ NameError: name 'Value' is not defined
 <details>
 <summary>Key, index, and path transforms</summary>
 
-``` 
+``` Python 3
+>>> Dog.objects.create(name='Rufus', data={
+...     'bread': 'labrador',
+...     'owner': {
+...         'name': 'Bob',
+...         'other_pets' : [{
+...             'name': 'Fishy',
+...         }],
+...     },
+... })
+<Dog: Rufus>
+```
 
+</details>
+
+<details>
+<summary>Multiple keys can be chained together to form a path lookup:</summary>
+
+``` Python 3
+>>> Dog.objects.filter(data__owner__name='Bob')
+<QuerySet [<Dog: Rufus>]>
+```
+
+</details>
+
+<details>
+<summary>If the key is an integer, it will be interpreted as an index transform in an array:</summary>
+
+``` Python 3
+>>> Dog.objects.filter(data__owner__other_pets__0__name='Fishy')
+<QuerySet [<Dog: Rufus>]>
+```
+
+</details>
+
+If the key you wish to query by clashes with the name of another lookup, use the contains lookup instead.
+
+<details>
+<summary>To query for missing keys, use the isnull lookup:</summary>
+
+``` Python 3
+>>> Dog.objects.create(name='Shop', data={'breed': 'collie'})
+<Dog: Shop>
+>>> Dog.objects.filter(data__owner__isnull=True)
+<QuerySet [<Dog: Archie>, <Dog: Max>, <Dog: Shop>]>
+>>>
+```
+
+</details>
+
+Containment and key lookups
+
+<details>
+<summary>The contains lookup is overridden on JSONField. </summary>
+
+``` Python 3
+>>> Dog.objects.create(name='Rufus', data={'breed': 'labrador', 'owner': 'Bob'})
+<Dog: Rufus>
+>>> Dog.objects.create(name='Meg', data={'breed': 'collie', 'owner': 'Bob'})
+<Dog: Meg>
+>>> Dog.objects.create(name='Fred', data={})
+<Dog: Fred>
+>>> Dog.objects.filter(data__contains={'owner': 'Bob'})
+django.db.utils.NotSupportedError: contains lookup is not supported on this database backend.
+# contains is not supported on Oracle and SQLite.
+# Its backend is SQLite now.
+```
+
+</details>
+
+<details>
+<summary>contained_by</summary>
+
+``` Python 3
+>>> Dog.objects.create(name='Rufus', data={'breed': 'labrador', 'owner': 'Bob'})
+<Dog: Rufus>
+>>> Dog.objects.create(name='Meg', data={'breed': 'collie', 'owner': 'Bob'})
+<Dog: Meg>
+>>> Dog.objects.create(name='Fred', data={})
+<Dog: Fred>
+>>> Dog.objects.filter(data__contained_by={'breed': 'collie', 'owner': 'Bob'})
+django.db.utils.NotSupportedError: contained_by lookup is not supported on this database backend.
+# contains is not supported on Oracle and SQLite.
+# Its backend is SQLite now.
+```
+
+</details>
+
+<details>
+<summary>has_key</summary>
+
+``` Python 3
+>>> Dog.objects.create(name='Rufus', data={'breed': 'labrador'})
+<Dog: Rufus>
+>>> Dog.objects.create(name='Meg', data={'breed': 'collie', 'owner': 'Bob'})
+<Dog: Meg>
+>>> Dog.objects.filter(data__has_key='owner')
+<QuerySet [<Dog: Meg>, <Dog: Meg>, <Dog: Meg>, <Dog: Rufus>, <Dog: Rufus>, <Dog: Rufus>]>
+```
+
+</details>
+
+<details>
+<summary>has_keys</summary>
+
+``` Python 3
+>>> Dog.objects.filter(data__has_keys=['breed', 'owner'])
+<QuerySet [<Dog: Meg>, <Dog: Meg>, <Dog: Meg>, <Dog: Rufus>, <Dog: Rufus>]>
+```
+
+</details>
+
+<details>
+<summary>has_any_keys</summary>
+
+``` Python 3
+>>> Dog.objects.filter(data__has_any_keys=['owner', 'breed'])
+<QuerySet [<Dog: Meg>, <Dog: Meg>, <Dog: Meg>, <Dog: Rufus>, <Dog: Rufus>, <Dog: Rufus>, <Dog: Rufus>, <Dog: Shop>]>
+```
+
+</details>
+
+Q オブジェクトを用いた複雑な検索
+
+>キーワード引数のクエリ（filter() など）は、"AND "結合される。-- などのキーワード引数によるクエリは、互いに "AND" されます。より複雑なクエリ (たとえば OR 文を含むクエリ) を実行する必要がある場合は、Q オブジェクトを使用します。
+>
+>Q オブジェクト (django.db.models.Q) は、キーワード引数のコレクションをカプセル化するた めに使われるオブジェクトです。これらのキーワード引数は、上の 「フィールド検索」 のように指定します。
+
+<details>
+<summary>Q Object Examples</summary>
+
+``` Python 3
+Q(question__startswith='What')
+```
+
+``` Python 3
+Q(question__startswith='Who') | Q(question__startswith='What')
+```
+
+>Qオブジェクトを`&`、 `|`、 `^`演算子で組み合わせ、親文字でグループ化することで、任意の複雑な文を構成することができます。
+>また、Q オブジェクトは `~` 演算子で否定することができ、通常の問い合わせと否定（NOT）問い合わせの両方を組み合わせた検索が可能です。
+
+``` Python 3
+Q(question__startswith='Who') | ~Q(pub_date__year=2005)
+```
+
+>キーワード引数を取る各検索関数 (例: filter(), exclude(), get()) には、位置引数 (名前なし) として 1 つ以上の Q オブジェクトを渡すことも可能です。
+>検索関数に複数の Q オブジェクト引数を指定した場合、それらの引数は "AND" 処理されます。
+
+``` Python 3
+Poll.objects.get(
+    Q(question__startswith='Who'),
+    Q(pub_date=date(2005, 5, 2)) | Q(pub_date=date(2005, 5, 6))
+)
+```
+
+``` SQL
+SELECT * from polls WHERE question LIKE 'Who%'
+    AND (pub_date = '2005-05-02' OR pub_date = '2005-05-06')
+```
+
+>ルックアップ関数は、Qオブジェクトとキーワード引数を混在して使用することができます。ルックアップ関数に提供されたすべての引数（キーワード引数であれ、Qオブジェクトであれ）は、一緒に「AND」されます。
+>しかし、Qオブジェクトが提供される場合、それはキーワード引数の定義の前になければなりません。
+
+``` Python 3
+Poll.objects.get(
+    Q(pub_date=date(2005, 5, 2)) | Q(pub_date=date(2005, 5, 6)),
+    question__startswith='Who',
+)
 ```
 
 </details>
